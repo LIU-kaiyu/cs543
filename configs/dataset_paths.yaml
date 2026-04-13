@@ -1,0 +1,23 @@
+# Dataset root paths — update these to match your local/cloud setup
+
+smoke_test:
+  images: third_party/MiDaS/input   # use MiDaS sample images for smoke test
+
+kitti_c:
+  root: data/raw/kitti_c            # KITTI-C root (corruption folders inside)
+  gt_path: data/raw/kitti_gt        # clean KITTI ground-truth depth maps
+
+nyu_c:
+  root: data/raw/nyu_c              # NYUDepth2-C root
+  gt_path: data/raw/nyu_gt          # NYU ground-truth depth
+
+diode:
+  val_root: data/raw/diode/val      # DIODE validation split only
+
+# Output roots
+outputs:
+  predictions: outputs/predictions
+  metrics: outputs/metrics
+  tables: outputs/tables
+  galleries: outputs/galleries
+  manifests: data/manifests

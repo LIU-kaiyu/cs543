@@ -1,0 +1,33 @@
+# Evaluation settings
+
+alignment:
+  method: scale_shift    # "scale_shift" (least-squares) or "scale_only" (median ratio)
+
+metrics:
+  - abs_rel
+  - sq_rel
+  - rmse
+  - rmse_log
+  - delta1
+  - delta2
+  - delta3
+
+kitti_c:
+  min_depth: 1e-3
+  max_depth: 80.0
+  use_eigen_crop: true
+
+nyu_c:
+  min_depth: 1e-3
+  max_depth: 10.0
+  use_eigen_crop: false
+
+diode:
+  min_depth: 1e-3
+  max_depth: 300.0
+  use_eigen_crop: false
+
+# Failure gallery size per corruption slice
+gallery_n_worst: 20
+gallery_n_median: 20
+gallery_n_best: 20

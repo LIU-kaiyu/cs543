@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash([ -d \"/c/CS543 Project/$dir\" ])"
+    ]
+  }
+}
