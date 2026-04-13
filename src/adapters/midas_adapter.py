@@ -13,17 +13,38 @@ import cv2
 import numpy as np
 import torch
 
+# ---- FORCE THE MIDAS PATH FOR THIS MACHINE ----
+_MIDAS_DIR = Path("/home/kaiyul3/cs543/third_party/MIDAS")
+
+if not (_MIDAS_DIR / "midas").is_dir():
+    raise RuntimeError(
+        f"MiDaS repo not found at: {_MIDAS_DIR}\n"
+        f"Expected package folder: {_MIDAS_DIR / 'midas'}"
+    )
+
+if str(_MIDAS_DIR) not in sys.path:
+    sys.path.insert(0, str(_MIDAS_DIR))
+
+from midas.model_loader import load_model, default_models  # noqa: E402
+
 # Ensure MiDaS is importable.
 # Strategy: search sys.path entries for one whose parent contains third_party/MiDaS.
 # This is more reliable than Path(__file__).resolve() on network filesystems
 # (e.g. Google Drive FUSE mounts in Colab), where resolve() can return wrong paths.
 def _find_midas_dir() -> Path:
-    # 1. Check each sys.path root for third_party/MiDaS
+    # 1. Check if sys.path already points directly to MiDaS
+    for entry in sys.path:
+        p = Path(entry)
+        if (p / "midas").is_dir():
+            return p
+
+    # 2. Check if sys.path points to project root
     for entry in sys.path:
         candidate = Path(entry) / "third_party" / "MiDaS"
         if (candidate / "midas").is_dir():
             return candidate
-    # 2. Walk up from __file__ (works locally when Drive quirks are absent)
+
+    # 3. Walk upward from this file
     try:
         for parent in Path(__file__).resolve().parents:
             candidate = parent / "third_party" / "MiDaS"
@@ -31,6 +52,7 @@ def _find_midas_dir() -> Path:
                 return candidate
     except Exception:
         pass
+
     raise RuntimeError(
         "Cannot locate third_party/MiDaS. "
         "Add the project root to sys.path before importing:\n"
