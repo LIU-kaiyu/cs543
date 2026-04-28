@@ -3,19 +3,27 @@
 set -e
 
 python - <<'EOF'
-import sys, pathlib
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
-from src.adapters.midas_adapter import MiDaSAdapter
+import sys
 from pathlib import Path
+
+project_root = Path.cwd()
+if not (project_root / "configs" / "dataset_paths.yaml").exists():
+    raise RuntimeError("Run this script from the repository root.")
+
+sys.path.insert(0, str(project_root))
+from src.adapters.midas_adapter import MiDaSAdapter
 import glob
 
 adapter = MiDaSAdapter(model_type="dpt_hybrid_384")
 
-input_dir = Path("third_party/MiDaS/input")
+input_dir = project_root / "third_party" / "MiDaS" / "input"
+if not input_dir.exists():
+    input_dir = project_root / "third_party" / "MIDAS" / "input"
+
 image_paths = sorted(glob.glob(str(input_dir / "*.jpg")) + glob.glob(str(input_dir / "*.png")))
 
 if not image_paths:
-    print("No images found in third_party/MiDaS/input/ — add some RGB images first.")
+    print("No images found in third_party/MiDaS/input/ or third_party/MIDAS/input/ — add some RGB images first.")
     sys.exit(1)
 
 records = adapter.run_batch(image_paths, output_dir="outputs/predictions/smoke", verbose=True)

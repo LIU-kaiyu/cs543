@@ -4,6 +4,7 @@ MiDaS inference adapter.
 Wraps third_party/MiDaS so the benchmark code never imports MiDaS directly.
 Outputs are raw relative inverse depth maps saved as .npy files.
 """
+import os
 import sys
 import time
 from pathlib import Path
@@ -13,57 +14,68 @@ import cv2
 import numpy as np
 import torch
 
-# ---- FORCE THE MIDAS PATH FOR THIS MACHINE ----
-_MIDAS_DIR = Path("/home/kaiyul3/cs543/third_party/MIDAS")
 
-if not (_MIDAS_DIR / "midas").is_dir():
-    raise RuntimeError(
-        f"MiDaS repo not found at: {_MIDAS_DIR}\n"
-        f"Expected package folder: {_MIDAS_DIR / 'midas'}"
-    )
+def _iter_midas_candidates() -> list[Path]:
+    candidates: list[Path] = []
 
-if str(_MIDAS_DIR) not in sys.path:
-    sys.path.insert(0, str(_MIDAS_DIR))
+    env_dir = os.environ.get("MIDAS_DIR")
+    if env_dir:
+        candidates.append(Path(env_dir).expanduser())
 
-from midas.model_loader import load_model, default_models  # noqa: E402
+    for entry in sys.path:
+        if not entry:
+            continue
+        path = Path(entry)
+        candidates.append(path)
+        candidates.append(path / "third_party" / "MiDaS")
+        candidates.append(path / "third_party" / "MIDAS")
 
-# Ensure MiDaS is importable.
-# Strategy: search sys.path entries for one whose parent contains third_party/MiDaS.
-# This is more reliable than Path(__file__).resolve() on network filesystems
-# (e.g. Google Drive FUSE mounts in Colab), where resolve() can return wrong paths.
+    for parent in Path(__file__).resolve().parents:
+        candidates.append(parent / "third_party" / "MiDaS")
+        candidates.append(parent / "third_party" / "MIDAS")
+
+    # Preserve order but drop duplicates.
+    ordered: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key not in seen:
+            ordered.append(candidate)
+            seen.add(key)
+    return ordered
+
+
 def _find_midas_dir() -> Path:
-    # 1. Check if sys.path already points directly to MiDaS
-    for entry in sys.path:
-        p = Path(entry)
-        if (p / "midas").is_dir():
-            return p
+    """
+    Locate an upstream MiDaS checkout.
 
-    # 2. Check if sys.path points to project root
-    for entry in sys.path:
-        candidate = Path(entry) / "third_party" / "MiDaS"
-        if (candidate / "midas").is_dir():
-            return candidate
+    Accepted layouts:
+      - <candidate>/midas/...
+      - <candidate>/MiDaS/midas/...     (when a parent directory is given)
+    """
+    for candidate in _iter_midas_candidates():
+        direct = candidate
+        nested = candidate / "MiDaS"
 
-    # 3. Walk upward from this file
-    try:
-        for parent in Path(__file__).resolve().parents:
-            candidate = parent / "third_party" / "MiDaS"
-            if (candidate / "midas").is_dir():
-                return candidate
-    except Exception:
-        pass
+        if (direct / "midas").is_dir():
+            return direct
+        if (nested / "midas").is_dir():
+            return nested
 
     raise RuntimeError(
-        "Cannot locate third_party/MiDaS. "
-        "Add the project root to sys.path before importing:\n"
-        "  sys.path.insert(0, '/path/to/CS543 Project')"
+        "Cannot locate an upstream MiDaS checkout.\n"
+        "Expected one of these layouts:\n"
+        "  third_party/MiDaS/midas/\n"
+        "  third_party/MIDAS/midas/\n"
+        "You can also point MIDAS_DIR at the repo root."
     )
+
 
 _MIDAS_DIR = _find_midas_dir()
 if str(_MIDAS_DIR) not in sys.path:
     sys.path.insert(0, str(_MIDAS_DIR))
 
-from midas.model_loader import load_model, default_models  # noqa: E402
+from midas.model_loader import default_models, load_model  # noqa: E402
 
 
 def _read_image(path: str) -> np.ndarray:
@@ -97,7 +109,12 @@ class MiDaSAdapter:
         self.model_type = model_type
 
         if device is None:
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            if torch.cuda.is_available():
+                self.device = torch.device("cuda")
+            elif getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+                self.device = torch.device("mps")
+            else:
+                self.device = torch.device("cpu")
         else:
             self.device = torch.device(device)
 

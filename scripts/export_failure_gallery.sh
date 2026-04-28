@@ -4,11 +4,16 @@
 set -e
 
 python - <<'EOF'
-import sys, pathlib
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+import sys
+from pathlib import Path
+
+project_root = Path.cwd()
+if not (project_root / "configs" / "dataset_paths.yaml").exists():
+    raise RuntimeError("Run this script from the repository root.")
+
+sys.path.insert(0, str(project_root))
 
 import pandas as pd
-from pathlib import Path
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
