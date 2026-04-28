@@ -48,20 +48,30 @@ MiDaS predicts **relative inverse depth** — not calibrated metric depth. This 
 │   ├── 01_build_kittic_manifest.ipynb   # Build KITTI-C CSV manifest
 │   ├── 02_run_midas_on_kittic.ipynb     # Batch inference → .npy predictions
 │   ├── 03_eval_metrics.ipynb            # Alignment + metrics → results CSV
-│   └── 04_failure_case_analysis.ipynb  # Tables, severity curves, galleries
+│   ├── 04_failure_case_analysis.ipynb   # Tables, severity curves, galleries
+│   ├── 05_build_diode_manifest.ipynb    # Build DIODE val CSV manifest
+│   ├── 06_run_midas_on_diode.ipynb      # Batch inference on DIODE val
+│   ├── 07_eval_diode_metrics.ipynb      # Alignment + metrics for DIODE
+│   └── 08_diode_failure_case_analysis.ipynb  # Domain-wise DIODE analysis
 │
 ├── scripts/
 │   ├── setup_local.sh          # Create conda environment
+│   ├── setup_third_party.sh    # Clone the upstream MiDaS repo
 │   ├── download_weights.sh     # Download dpt_hybrid_384 weights
+│   ├── download_diode_val.sh   # Download the DIODE validation split
 │   ├── run_smoke_test.sh       # CLI smoke test (no notebook needed)
 │   ├── run_kittic_batch.sh     # Full KITTI-C inference + eval in one pass
-│   └── export_failure_gallery.sh  # Export PNG galleries from results CSV
+│   ├── run_diode_batch.sh      # Full DIODE val inference + eval in one pass
+│   ├── export_failure_gallery.sh  # Export PNG galleries from results CSV
+│   ├── export_diode_gallery.sh   # Export DIODE indoor/outdoor galleries
+│   └── export_diode_failure_panels.sh  # Export report-ready DIODE failure panels
 │
 ├── src/
 │   ├── adapters/
 │   │   └── midas_adapter.py   # MiDaSAdapter — load model, run inference
 │   ├── datasets/
 │   │   ├── kitti_c.py         # Manifest builder + KittiCDataset
+│   │   ├── diode.py           # Manifest builder + DIODEDataset
 │   │   └── transforms.py      # Depth PNG loaders (KITTI, NYU, DIODE)
 │   ├── evaluation/
 │   │   ├── align.py           # Scale-shift alignment (REQUIRED before metrics)
@@ -114,9 +124,10 @@ bash scripts/setup_local.sh
 conda activate midas-benchmark
 ```
 
-### Step 2 — Download model weights
+### Step 2 — Clone MiDaS and download model weights
 
 ```bash
+bash scripts/setup_third_party.sh
 bash scripts/download_weights.sh
 ```
 
@@ -285,15 +296,55 @@ Loads `kittic_results.csv` and produces failure analysis.
 
 ---
 
+### `05_build_diode_manifest.ipynb`
+
+Scans the DIODE validation split and builds a CSV manifest.
+
+- Reads `configs/dataset_paths.yaml` for `diode.val_root`
+- Produces `data/manifests/diode_val_manifest.csv`
+- Adds `domain` metadata (`indoors` / `outdoor`) plus reusable analysis columns
+
+### `06_run_midas_on_diode.ipynb`
+
+Batch inference over the DIODE validation manifest.
+
+- Saves one `.npy` per image under `outputs/predictions/diode/<domain>/<scene>/<scan>/`
+- Resume-safe: re-running skips already-completed predictions
+- Supports a small `MAX_SAMPLES` smoke run before the full split
+
+### `07_eval_diode_metrics.ipynb`
+
+Evaluates MiDaS predictions against DIODE depth + validity masks.
+
+- Loads DIODE `*_depth.npy` and `*_depth_mask.npy`
+- **Applies `align_scale_shift` before every metric** — this is required
+- Saves results to `outputs/metrics/diode_results.csv`
+- Reports both overall and indoor/outdoor summaries
+
+### `08_diode_failure_case_analysis.ipynb`
+
+Summarises DIODE failure patterns and exports domain-wise slices.
+
+- Overall metrics and `domain` breakdown
+- Worst / median / best samples for `indoors` and `outdoor`
+- Ready-made tables for the midterm report
+
+---
+
 ## Scripts — What Each One Does
 
 | Script | Purpose |
 |--------|---------|
 | `setup_local.sh` | Create conda env and install packages |
+| `setup_third_party.sh` | Clone the upstream MiDaS repo into `third_party/MiDaS` |
 | `download_weights.sh` | Download `dpt_hybrid_384.pt` weights (~470 MB) |
+| `download_diode_val.sh` | Download and extract the official DIODE validation split |
 | `run_smoke_test.sh` | CLI equivalent of notebook 00 — no Jupyter needed |
 | `run_kittic_batch.sh` | Full KITTI-C inference + alignment + metrics in one pass |
+| `run_diode_batch.sh` | Full DIODE inference + alignment + metrics in one pass |
 | `export_failure_gallery.sh` | Export worst/median/best PNGs for every corruption type |
+| `export_diode_gallery.sh` | Export worst/median/best PNGs for DIODE indoor/outdoor domains |
+| `export_diode_failure_panels.sh` | Export report-ready DIODE top-failure figures with RGB / GT / prediction / error |
 
 Run scripts from the project root:
 
@@ -349,6 +400,15 @@ from src.datasets.kitti_c import build_manifest, KittiCDataset
 
 df = build_manifest(kitti_c_root, gt_root)          # returns DataFrame
 dataset = KittiCDataset(df, corruption_filter='fog') # PyTorch Dataset
+```
+
+### `src/datasets/diode.py`
+
+```python
+from src.datasets.diode import build_manifest, DIODEDataset
+
+df = build_manifest(diode_val_root)               # returns DataFrame
+dataset = DIODEDataset(df, domain_filter='outdoor')
 ```
 
 ### `src/analysis/failure_slices.py`

@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+third_party/MiDaS/
+third_party/MIDAS/
+data/raw/diode/
+data/manifests/diode_val_manifest.csv
+outputs/predictions/diode/
+outputs/metrics/diode_results.csv
+outputs/galleries/diode/
+outputs/figures/diode/
