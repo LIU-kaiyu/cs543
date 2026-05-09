@@ -14,6 +14,8 @@ def corruption_summary_table(df: pd.DataFrame) -> pd.DataFrame:
 
     Returns a DataFrame indexed by corruption_type with one column per metric.
     """
+    if df.empty or "corruption_type" not in df.columns:
+        return pd.DataFrame(columns=["corruption_type"] + _METRICS).set_index("corruption_type")
     available = [m for m in _METRICS if m in df.columns]
     return (
         df.groupby("corruption_type")[available]

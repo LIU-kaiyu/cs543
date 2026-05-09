@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run smoke test: MiDaS inference on sample images in third_party/MiDaS/input/
+# Run smoke test: MiDaS inference on sample images in third_party/MIDAS/input/
 set -e
 
 python - <<'EOF'
@@ -11,11 +11,11 @@ import glob
 
 adapter = MiDaSAdapter(model_type="dpt_hybrid_384")
 
-input_dir = Path("third_party/MiDaS/input")
+input_dir = Path("third_party/MIDAS/input")
 image_paths = sorted(glob.glob(str(input_dir / "*.jpg")) + glob.glob(str(input_dir / "*.png")))
 
 if not image_paths:
-    print("No images found in third_party/MiDaS/input/ — add some RGB images first.")
+    print("No images found in third_party/MIDAS/input/ — add some RGB images first.")
     sys.exit(1)
 
 records = adapter.run_batch(image_paths, output_dir="outputs/predictions/smoke", verbose=True)

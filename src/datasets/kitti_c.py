@@ -1,15 +1,17 @@
 """
 KITTI-C dataset manifest builder and PyTorch Dataset.
 
-Expected directory layout (RoboDepth convention):
+Expected directory layout (RoboDepth / actual download convention):
   <root>/
     <corruption_type>/     e.g. brightness, fog, motion_blur ...
-      <severity>/          1, 2, 3, 4, 5
-        <seq>/
-          image_02/data/
-            <frame>.png
+      <severity>/          1, 2, 3, 4, 5   (omitted for 'clean')
+        kitti_data/
+          <date>/          e.g. 2011_09_26
+            <seq>/         e.g. 2011_09_26_drive_0002_sync
+              image_02/data/
+                <frame>.png
 
-Ground-truth depth layout:
+Ground-truth depth layout (optional):
   <gt_root>/
     <seq>/
       proj_depth/groundtruth/image_02/
@@ -34,15 +36,19 @@ from src.datasets.transforms import load_rgb, load_kitti_depth, resize_depth
 
 def build_manifest(
     root_dir: str | Path,
-    gt_dir: str | Path,
+    gt_dir: str | Path | None = None,
     split: str = "test",
 ) -> pd.DataFrame:
     """
     Scan a KITTI-C root directory and build a manifest DataFrame.
 
+    Handles the RoboDepth download layout where images are nested under
+    kitti_data/<date>/<seq>/image_02/data/.
+
     Args:
         root_dir: KITTI-C root (corruption folders at top level)
-        gt_dir: clean KITTI ground-truth depth root
+        gt_dir: clean KITTI ground-truth depth root (optional; gt_path
+                column will be None when not provided or file not found)
         split: label to attach to every row
 
     Returns:
@@ -51,7 +57,7 @@ def build_manifest(
             frame_id, split, dataset
     """
     root_dir = Path(root_dir)
-    gt_dir = Path(gt_dir)
+    gt_dir = Path(gt_dir) if gt_dir is not None else None
     records = []
 
     for corruption_dir in sorted(root_dir.iterdir()):
@@ -59,44 +65,72 @@ def build_manifest(
             continue
         corruption_type = corruption_dir.name
 
-        for severity_dir in sorted(corruption_dir.iterdir()):
+        # 'clean' has no severity sub-folders — images are directly under kitti_data/
+        if corruption_type == "clean":
+            severity_dirs = [corruption_dir]
+            severity_val = 0
+        else:
+            severity_dirs = sorted(corruption_dir.iterdir())
+            severity_val = None  # set per sub-dir below
+
+        for severity_dir in severity_dirs:
             if not severity_dir.is_dir():
                 continue
-            try:
-                severity = int(severity_dir.name)
-            except ValueError:
+
+            if corruption_type == "clean":
+                severity = 0
+            else:
+                try:
+                    severity = int(severity_dir.name)
+                except ValueError:
+                    continue
+
+            # Walk kitti_data/<date>/<seq>/image_02/data/
+            kitti_data_dir = severity_dir / "kitti_data"
+            if not kitti_data_dir.exists():
                 continue
 
-            for seq_dir in sorted(severity_dir.iterdir()):
-                if not seq_dir.is_dir():
-                    continue
-                seq = seq_dir.name
-                img_dir = seq_dir / "image_02" / "data"
-                if not img_dir.exists():
+            for date_dir in sorted(kitti_data_dir.iterdir()):
+                if not date_dir.is_dir():
                     continue
 
-                for img_path in sorted(img_dir.glob("*.png")):
-                    frame_id = img_path.stem
-                    gt_path = (
-                        gt_dir
-                        / seq
-                        / "proj_depth"
-                        / "groundtruth"
-                        / "image_02"
-                        / f"{frame_id}.png"
-                    )
-                    records.append(
-                        {
-                            "image_path": str(img_path),
-                            "gt_path": str(gt_path) if gt_path.exists() else None,
-                            "corruption_type": corruption_type,
-                            "severity": severity,
-                            "sequence": seq,
-                            "frame_id": frame_id,
-                            "split": split,
-                            "dataset": "kitti_c",
-                        }
-                    )
+                for seq_dir in sorted(date_dir.iterdir()):
+                    if not seq_dir.is_dir():
+                        continue
+                    seq = seq_dir.name
+                    img_dir = seq_dir / "image_02" / "data"
+                    if not img_dir.exists():
+                        continue
+
+                    for img_path in sorted(img_dir.glob("*.png")):
+                        frame_id = img_path.stem
+                        gt_path = None
+                        if gt_dir is not None:
+                            for gt_prefix in [gt_dir, gt_dir / "train", gt_dir / "val"]:
+                                candidate = (
+                                    gt_prefix
+                                    / seq
+                                    / "proj_depth"
+                                    / "groundtruth"
+                                    / "image_02"
+                                    / f"{frame_id}.png"
+                                )
+                                if candidate.exists():
+                                    gt_path = str(candidate)
+                                    break
+
+                        records.append(
+                            {
+                                "image_path": str(img_path),
+                                "gt_path": gt_path,
+                                "corruption_type": corruption_type,
+                                "severity": severity,
+                                "sequence": seq,
+                                "frame_id": frame_id,
+                                "split": split,
+                                "dataset": "kitti_c",
+                            }
+                        )
 
     df = pd.DataFrame(records)
     return df

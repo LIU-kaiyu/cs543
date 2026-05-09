@@ -1,11 +1,11 @@
 # Dataset root paths — update these to match your local/cloud setup
 
 smoke_test:
-  images: third_party/MiDaS/input   # use MiDaS sample images for smoke test
+  images: third_party/MIDAS/input   # use MiDaS sample images for smoke test
 
 kitti_c:
-  root: data/raw/kitti_c            # KITTI-C root (corruption folders inside)
-  gt_path: data/raw/kitti_gt        # clean KITTI ground-truth depth maps
+  root: data/raw/kitti_c/kitti_c    # KITTI-C root (corruption folders at top level)
+  gt_path: data/raw/kitti_c         # root containing train/ and val/ GT depth subdirs
 
 nyu_c:
   root: data/raw/nyu_c              # NYUDepth2-C root

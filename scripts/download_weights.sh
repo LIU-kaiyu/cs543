@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Download MiDaS model weights into third_party/MiDaS/weights/
+# Download MiDaS model weights into third_party/MIDAS/weights/
 # Weights are hosted on GitHub Releases for the intel-isl/MiDaS repo.
 set -e
 
-WEIGHTS_DIR="third_party/MiDaS/weights"
+WEIGHTS_DIR="third_party/MIDAS/weights"
 mkdir -p "$WEIGHTS_DIR"
 
 download() {

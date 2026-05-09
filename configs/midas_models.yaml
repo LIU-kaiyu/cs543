@@ -3,13 +3,13 @@
 models:
   dpt_hybrid_384:
     model_type: dpt_hybrid_384
-    weights: third_party/MiDaS/weights/dpt_hybrid_384.pt
+    weights: third_party/MIDAS/weights/dpt_hybrid_384.pt
     input_size: 384
     description: "Primary benchmark model — DPT with hybrid ViT-B/ResNet50 backbone"
 
   midas_v21_small_256:
     model_type: midas_v21_small_256
-    weights: third_party/MiDaS/weights/midas_v21_small_256.pt
+    weights: third_party/MIDAS/weights/midas_v21_small_256.pt
     input_size: 256
     description: "Fast baseline model — MiDaS v2.1 with EfficientNet-Lite3 backbone"
 
