@@ -24,7 +24,8 @@ def _load_config() -> dict:
     global _CONFIG
     if _CONFIG is None:
         cfg_path = project_root() / "configs" / "dataset_paths.yaml"
-        with open(cfg_path) as f:
+        # with open(cfg_path) as f:
+        with open(cfg_path, encoding="utf-8") as f:
             _CONFIG = yaml.safe_load(f)
     return _CONFIG
 

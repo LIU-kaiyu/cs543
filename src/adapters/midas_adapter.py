@@ -14,6 +14,21 @@ import cv2
 import numpy as np
 import torch
 
+# ---- FORCE THE MIDAS PATH FOR THIS MACHINE ----
+# _MIDAS_DIR = Path("/home/kaiyul3/cs543/third_party/MIDAS")
+_MIDAS_DIR = Path(__file__).resolve().parents[2] / "third_party" / "MIDAS"
+
+if not (_MIDAS_DIR / "midas").is_dir():
+    raise RuntimeError(
+        f"MiDaS repo not found at: {_MIDAS_DIR}\n"
+        f"Expected package folder: {_MIDAS_DIR / 'midas'}"
+    )
+
+if str(_MIDAS_DIR) not in sys.path:
+    sys.path.insert(0, str(_MIDAS_DIR))
+
+from midas.model_loader import load_model, default_models  # noqa: E402
+
 # Ensure MiDaS is importable.
 # Strategy: search sys.path entries for one whose parent contains third_party/MIDAS.
 # This is more reliable than Path(__file__).resolve() on network filesystems
@@ -110,8 +125,13 @@ class MiDaSAdapter:
             depth (np.ndarray): raw relative inverse depth map,
                                 shape (H, W), float32, same spatial size as input
         """
-        img_rgb = _read_image(image_path)
+        # img_rgb = _read_image(image_path)
+        if isinstance(image_path, str):
+            img_rgb = _read_image(image_path)
+        else:
+            img_rgb = image_path
         sample = self.transform({"image": img_rgb})["image"]
+
 
         with torch.no_grad():
             tensor = torch.from_numpy(sample).to(self.device).unsqueeze(0)
