@@ -10,12 +10,17 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import json
+import subprocess
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
 
 import cv2
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -122,6 +127,7 @@ def run_inference(
         )
         for _, row in todo_rows.iterrows()
     ]
+    pbar = tqdm(total=len(todo_rows), desc="Inference", unit="img", dynamic_ncols=True)
     for start in range(0, len(todo_rows), batch_size):
         batch_rows = todo_rows.iloc[start : start + batch_size]
         batch_paths = image_paths[start : start + batch_size]
@@ -138,8 +144,8 @@ def run_inference(
             out_path.parent.mkdir(parents=True, exist_ok=True)
             np.save(str(out_path), depth)
 
-        done = min(start + len(batch_rows), len(todo_rows))
-        print(f"Predicted {done}/{len(todo_rows)}")
+        pbar.update(len(batch_rows))
+    pbar.close()
 
 
 def metric_record(
@@ -207,23 +213,23 @@ def run_eval(
     records = []
     missing = 0
 
-    for idx, row in df.iterrows():
+    pbar = tqdm(df.iterrows(), total=len(df), desc="Eval", unit="img", dynamic_ncols=True)
+    for idx, row in pbar:
         pred_path = prediction_path(row, pred_dir)
         if not pred_path.exists():
             missing += 1
+            pbar.set_postfix(ok=len(records), missing=missing)
             continue
 
         try:
             pred = np.load(str(pred_path))
             records.append(metric_record(row, pred, pred_path, model_type, preprocess))
         except Exception as exc:  # noqa: BLE001
-            print(f"ERROR [{idx}] {row['image_path']}: {exc}")
+            tqdm.write(f"ERROR [{idx}] {row['image_path']}: {exc}")
 
-        done = idx + 1
-        if progress_interval > 0 and (done % progress_interval == 0 or done == len(df)):
-            print(f"Evaluated {done}/{len(df)}; metrics rows={len(records)}; missing={missing}", flush=True)
+        pbar.set_postfix(ok=len(records), missing=missing)
+    pbar.close()
 
-    results = pd.DataFrame(records)
     if missing:
         print(f"Skipped {missing} rows without prediction files.")
 
@@ -257,6 +263,7 @@ def run_stream_eval(
         for _, row in df.iterrows()
     ]
 
+    pbar = tqdm(total=len(df), desc="Stream-eval", unit="img", dynamic_ncols=True)
     for start in range(0, len(df), batch_size):
         batch_rows = df.iloc[start : start + batch_size]
         batch_paths = image_paths[start : start + batch_size]
@@ -301,11 +308,76 @@ def run_stream_eval(
                 )
             )
 
-        done = min(start + len(batch_rows), len(df))
-        if progress_interval > 0 and (done % progress_interval == 0 or done == len(df)):
-            print(f"Stream-evaluated {done}/{len(df)}; metrics rows={len(records)}", flush=True)
+        pbar.update(len(batch_rows))
+        pbar.set_postfix(metrics=len(records))
+    pbar.close()
 
     return write_results(records, metrics_out)
+
+
+def write_summary(results: pd.DataFrame, metrics_out: Path) -> None:
+    from src.analysis.report_tables import corruption_summary_table
+
+    summary = corruption_summary_table(results)
+    out = metrics_out.parent / metrics_out.name.replace("kittic_results", "kittic_summary")
+    summary.to_csv(out)
+    print(f"Saved corruption summary to {out}")
+
+
+def write_comparison(results: pd.DataFrame, metrics_out: Path, baseline_path: Path) -> None:
+    if not baseline_path.exists():
+        print(f"Baseline not found at {baseline_path}; skipping comparison.")
+        return
+
+    baseline = pd.read_csv(baseline_path)
+    b = baseline.groupby("corruption_type")[["abs_rel", "rmse", "delta1"]].mean().reset_index()
+    e = results.groupby("corruption_type")[["abs_rel", "rmse", "delta1"]].mean().reset_index()
+    merged = b.merge(e, on="corruption_type", suffixes=("_baseline", "_experiment"))
+
+    for metric, lower_is_better in [("abs_rel", True), ("rmse", True), ("delta1", False)]:
+        base_col = f"{metric}_baseline"
+        exp_col = f"{metric}_experiment"
+        merged[f"{metric}_delta"] = merged[exp_col] - merged[base_col]
+        sign = -1 if lower_is_better else 1
+        merged[f"{metric}_improvement_pct"] = sign * merged[f"{metric}_delta"] / merged[base_col] * 100
+
+    stem = metrics_out.name.replace("kittic_results_", "kittic_comparison_").replace(".csv", "_vs_baseline.csv")
+    out = metrics_out.parent / stem
+    merged.to_csv(out, index=False)
+    print(f"Saved comparison to {out}")
+
+
+def write_run_metadata(
+    args: argparse.Namespace,
+    tag: str,
+    metrics_out: Path,
+    start_time: float,
+    n_evaluated: int,
+) -> None:
+    end_time = time.time()
+    try:
+        git_hash = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"], stderr=subprocess.DEVNULL
+        ).decode().strip()
+    except Exception:
+        git_hash = "unknown"
+
+    meta = {
+        "tag": tag,
+        "model_type": args.model_type,
+        "preprocess": args.preprocess,
+        "gamma": args.gamma,
+        "clahe_clip_limit": args.clahe_clip_limit,
+        "n_evaluated": n_evaluated,
+        "start_time": datetime.fromtimestamp(start_time).isoformat(),
+        "end_time": datetime.fromtimestamp(end_time).isoformat(),
+        "duration_hrs": round((end_time - start_time) / 3600, 3),
+        "git_commit": git_hash,
+    }
+    out = metrics_out.parent / metrics_out.name.replace("kittic_results", "kittic_run").replace(".csv", ".json")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(meta, indent=2))
+    print(f"Saved run metadata to {out}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -331,6 +403,8 @@ def parse_args() -> argparse.Namespace:
             "denoise",
             "clahe-gamma",
             "clahe-denoise",
+            "restormer",
+            "auto-restormer",
         ],
         help="Image preprocessing strategy before MiDaS inference.",
     )
@@ -340,8 +414,21 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def print_device_banner() -> None:
+    import torch
+
+    if torch.cuda.is_available():
+        name = torch.cuda.get_device_name(0)
+        mem = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        print(f"[GPU] CUDA available — running on {name} ({mem:.0f} GB), torch {torch.__version__}")
+    else:
+        print(f"[CPU] WARNING: CUDA not available — running on CPU (torch {torch.__version__})")
+        print("[CPU] This will be ~50x slower. Verify torch CUDA build matches the driver.")
+
+
 def main() -> None:
     args = parse_args()
+    print_device_banner()
 
     manifest_path = ensure_manifest(force_rebuild=args.build_manifest)
     tag = prediction_tag(args.preprocess, gamma=args.gamma, clahe_clip_limit=args.clahe_clip_limit)
@@ -351,6 +438,8 @@ def main() -> None:
     else:
         pred_dir = get_output_path("predictions") / "kitti_c" / tag
         metrics_out = get_output_path("metrics") / f"kittic_results_{tag}.csv"
+
+    baseline_csv = get_output_path("metrics") / "kittic_results.csv"
 
     df = load_eval_rows(
         manifest_path,
@@ -366,8 +455,10 @@ def main() -> None:
     if args.stream_eval and args.eval_only:
         raise ValueError("--stream-eval and --eval-only cannot be used together.")
 
+    start_time = time.time()
+
     if args.stream_eval:
-        run_stream_eval(
+        results = run_stream_eval(
             df,
             pred_dir,
             metrics_out,
@@ -379,6 +470,9 @@ def main() -> None:
             args.num_workers,
             args.eval_progress_interval,
         )
+        write_summary(results, metrics_out)
+        write_comparison(results, metrics_out, baseline_csv)
+        write_run_metadata(args, tag, metrics_out, start_time, len(results))
         return
 
     if not args.eval_only:
@@ -392,7 +486,10 @@ def main() -> None:
             args.gamma,
             args.clahe_clip_limit,
         )
-    run_eval(df, pred_dir, metrics_out, args.model_type, args.preprocess, args.eval_progress_interval)
+    results = run_eval(df, pred_dir, metrics_out, args.model_type, args.preprocess, args.eval_progress_interval)
+    write_summary(results, metrics_out)
+    write_comparison(results, metrics_out, baseline_csv)
+    write_run_metadata(args, tag, metrics_out, start_time, len(results))
 
 
 if __name__ == "__main__":

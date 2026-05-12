@@ -31,9 +31,9 @@ Xinyin Liang \quad Yihui Chen \quad Kaiyu Liu \quad Yuyang Zeng
 \begin{abstract}
 % ============================================================
 
-Monocular depth estimation is an important computer vision problem because it allows a system to infer 3D scene structure from a single RGB image. However, modern depth estimation models can be sensitive to visual corruptions, especially when deployed outside clean benchmark conditions. In this project, we study the robustness and failure modes of MiDaS, a pretrained monocular depth estimation model, on KITTI-C, a corrupted version of KITTI containing multiple corruption types and severity levels. We evaluate the pretrained MiDaS DPT-Hybrid-384 model without any training or fine-tuning.
+Monocular depth estimation is an important computer vision problem because it allows a system to infer 3D scene structure from a single RGB image. However, modern depth estimation models can be sensitive to visual corruptions, especially when deployed outside clean benchmark conditions. In this project, we study the robustness and failure modes of MiDaS, a pretrained monocular depth estimation model, on KITTI-C, a corrupted version of KITTI containing multiple corruption types and severity levels. We use the pretrained MiDaS DPT-Hybrid-384 model for evaluation.
 
-We organize the project around a ``break it and improve it'' framework. In the break-it stage, we evaluate MiDaS across NYU Depth V2, DIODE, and KITTI-C to study clean indoor performance, cross-dataset/domain-shift behavior, and corruption robustness. This analysis shows that MiDaS performs well on clean indoor data but degrades under outdoor domain shift and visual corruptions, with snow producing the largest degradation on KITTI-C. In the improve-it stage, we design lightweight corruption-aware preprocessing methods to improve robustness at test time. We compare three KITTI-C settings: a baseline with no preprocessing, a naive auto preprocessing strategy, and a refined auto-conservative strategy. Our results show that naive preprocessing slightly worsens the overall average, while auto-conservative improves most metrics, including AbsRel, SqRel, RMSE, $\delta_1$, $\delta_2$, and $\delta_3$. The results also show that preprocessing is highly corruption-dependent: denoising helps noise corruptions, gamma correction helps dark images, and CLAHE helps snow but can hurt fog, frost, and contrast. This suggests that robustness improvement requires not only choosing an enhancement method, but also deciding when not to apply it.
+We organize the project around a ``break it and improve it'' framework. In the break-it stage, we evaluate MiDaS across NYU Depth V2, DIODE, and KITTI-C to study clean indoor performance, cross-dataset/domain-shift behavior, and corruption robustness. This analysis shows that MiDaS performs well on clean indoor data but degrades under outdoor domain shift and visual corruptions, with snow producing the largest degradation on KITTI-C. In the improve-it stage, we design lightweight corruption-aware preprocessing methods to improve robustness at test time. We compare four KITTI-C settings: a baseline with no preprocessing, a naive auto preprocessing strategy, a refined auto-conservative strategy, and an auto-restormer strategy that uses the pretrained Restormer restoration network as a frozen preprocessing front-end. Our results show that naive preprocessing slightly worsens the overall average, auto-conservative improves most metrics, and auto-restormer is the strongest setting overall, improving AbsRel, SqRel, RMSE, $\delta_1$, $\delta_2$, and $\delta_3$, driven largely by a 22.4\% relative AbsRel reduction on snow. However, applying Restormer's denoising task to noise corruptions degrades performance because it removes fine-grained texture that MiDaS uses as a depth cue. This refines our central finding: robustness improvement depends not only on whether to apply a restoration method, but on \emph{which restoration task} is selected for each corruption type.
 
 \end{abstract}
 
@@ -58,6 +58,7 @@ Our goals are:
     \item identify which corruptions cause the largest degradation;
     \item test whether simple preprocessing methods improve robustness;
     \item compare naive broad preprocessing with a conservative strategy;
+    \item evaluate whether a stronger pretrained restoration network (Restormer) outperforms classical operators when used as a corruption-specific preprocessing front-end;
     \item analyze why some preprocessing operations help while others hurt.
 \end{itemize}
 
@@ -69,6 +70,8 @@ Our main contributions are:
     \item We implement corruption-aware preprocessing methods including gamma correction, CLAHE, and denoising.
     \item We show that naive preprocessing can hurt overall performance because some transformations damage useful visual structures.
     \item We propose an auto-conservative preprocessing strategy that applies transformations only to corruption types where they empirically improve performance.
+    \item We integrate the pretrained Restormer restoration network as a frozen, corruption-specific preprocessing front-end (Auto-Restormer) and show it achieves the best overall AbsRel, SqRel, RMSE, $\delta_1$, $\delta_2$, and $\delta_3$.
+    \item We identify a sharper rule than ``when to preprocess'': we show that the choice of \emph{restoration task} (deraining vs.\ real\_denoising) determines whether a stronger restoration network helps or hurts a given corruption.
 \end{itemize}
 
 \subsection*{Related Work}
@@ -148,13 +151,19 @@ KITTI-C & Corruption benchmark & Outdoor driving & Robustness under visual corru
 \label{tab:datasets}
 \end{table}
 
-For KITTI-C, our manifest contains 63,427 image rows, of which 59,332 have valid ground-truth depth and are used for evaluation. These records cover 652 unique KITTI frames, 28 driving sequences, one clean setting, and 18 corruption types across severity levels 1--5. All experiments use the pretrained MiDaS DPT-Hybrid-384 model without any training or fine-tuning.
+NYU Depth V2 is an indoor RGB-D dataset containing approximately 1449 aligned RGB-depth image pairs with dense and high-quality ground-truth depth annotations. It is used as a clean indoor baseline to evaluate the default performance of MiDaS under relatively structured scene geometry and lighting conditions.
 
-For each image, we store the RGB image path, ground-truth depth path, corruption type, corruption severity, sequence id, and frame id. Results are aggregated by corruption type.
+DIODE is a dense depth dataset containing both indoor and outdoor scenes with RGB images, depth maps, and validity masks. We use the official validation split, which contains 771 images in total, including 325 indoor images and 446 outdoor images. DIODE is integrated as a cross-dataset and domain-shift benchmark because it allows direct comparison between indoor and outdoor generalization behavior within the same evaluation framework.
+
+KITTI-C extends the KITTI driving benchmark with synthetic visual corruptions applied at severity levels 1--5. Corrupted outdoor driving images are paired with matched sparse KITTI ground-truth depth annotations. Our processed evaluation manifest contains 63,427 image-condition rows, among which 59,332 have valid depth and are used for evaluation. These records cover 652 unique KITTI frames, 28 driving sequences, one clean setting, and 18 corruption types, including brightness, contrast, dark, defocus blur, fog, frost, gaussian noise, glass blur, JPEG compression, motion blur, pixelate, shot noise, snow, and zoom blur.
+
+For each image-condition record, we store the corrupted image path, ground-truth depth path, predicted depth path, corruption type, severity level, sequence id, frame id, and evaluation metrics. Results are aggregated by corruption type for robustness analysis.
+
+All experiments use the pretrained MiDaS DPT-Hybrid-384 model without any training or fine-tuning.
 
 \subsection{Preprocessing Strategies}
 
-We compare three settings.
+We compare four settings.
 
 \paragraph{Baseline.}
 The corrupted image is directly passed into MiDaS:
@@ -205,6 +214,27 @@ Other corruptions & None \\
 \end{table}
 
 This strategy applies transformations only to corruption types where preprocessing empirically improved performance.
+
+\paragraph{Auto-Restormer Preprocessing.}
+The auto-conservative policy relies on classical operators (gamma, CLAHE, OpenCV NLMeans). We additionally evaluate a stronger restoration-based variant in which the preprocessing operator is itself a pretrained transformer-based image restoration model, Restormer. The Restormer network is used frozen, without any fine-tuning, and we select the task-specific checkpoint that best matches the corruption family.
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lll}
+\toprule
+Corruption type & Preprocessing & Restormer task \\
+\midrule
+\texttt{dark} & Gamma correction ($\gamma=0.7$) & -- \\
+\texttt{snow}, \texttt{frost}, \texttt{fog} & Restormer & deraining \\
+\texttt{gaussian\_noise}, \texttt{shot\_noise}, \texttt{impulse\_noise}, \texttt{iso\_noise} & Restormer & real\_denoising \\
+Other corruptions & None & -- \\
+\bottomrule
+\end{tabular}
+\caption{Auto-Restormer preprocessing policy.}
+\label{tab:auto-restormer-policy}
+\end{table}
+
+The deraining checkpoint is applied to weather-like corruptions because snow and frost share the streak/occlusion statistics of training rain, while the real\_denoising checkpoint is applied to additive-noise corruptions whose pixel-level statistics resemble Restormer's denoising training distribution. Gamma correction is retained for \texttt{dark} because low-light recovery is a global tone-mapping operation rather than an image-restoration task.
 
 \subsection{Gamma Correction}
 
@@ -267,6 +297,17 @@ h=7,
 h_{\text{color}}=7.
 \]
 Denoising suppresses high-frequency sensor noise and makes the input closer to the clean image distribution expected by MiDaS.
+
+\subsection{Restormer Restoration}
+
+For the auto-restormer strategy, the classical CLAHE and NLMeans operators are replaced by Restormer, a pretrained transformer-based image-restoration network. Restormer is used as a frozen black-box; we do not perform any fine-tuning. Two task-specific Restormer checkpoints are used:
+
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Deraining checkpoint} — applied to snow, frost, and fog. Trained to remove rain streaks; we hypothesize that snowflakes and frost patterns share enough structural similarity with rain streaks for the deraining prior to transfer.
+    \item \textbf{Real\_denoising checkpoint} — applied to gaussian, shot, impulse, and iso noise. Trained to remove additive sensor noise.
+\end{itemize}
+
+Both checkpoints take a corrupted RGB image and return a restored RGB image of the same resolution. The restored image is then passed into MiDaS in place of the corrupted image. No corruption-type information is fed into Restormer itself; the corruption label is only used to select which checkpoint to invoke.
 
 \subsection{MiDaS Depth Prediction}
 
@@ -405,14 +446,19 @@ To avoid storing multiple copies of prediction arrays, we implement streaming ev
 
 \subsection{Intermediate Visualization Results}
 
-We first visualize the preprocessing operations themselves before showing depth predictions. Figure~\ref{fig:preprocessing-pairs} shows the three main transformations used in the auto-conservative strategy. Gamma correction brightens dark images and makes scene structure more visible; denoising suppresses high-frequency sensor noise; and CLAHE enhances local contrast in snow corruption, making edges clearer.
-
 \begin{figure}[H]
+
 \centering
-\includegraphics[width=0.78\linewidth]{figures/preprocessing_examples_3x2_recommended.png}
-\caption{Preprocessing examples used in the auto-conservative strategy. Row 1 shows gamma correction for dark corruption, Row 2 shows denoising for noise corruption, and Row 3 shows CLAHE for snow corruption.}
-\label{fig:preprocessing-pairs}
+
+\includegraphics[width=\linewidth]{figures/preprocess_examples.png}
+
+\caption{Intermediate visualizations of corruption-aware preprocessing methods. Top: gamma correction applied to dark corruption brightens low-light regions and restores scene visibility. Middle: non-local means denoising suppresses high-frequency artifacts caused by impulse noise. Bottom: CLAHE enhancement improves local contrast and edge visibility under snow corruption. Each example shows the corrupted RGB input (left) and the corresponding preprocessed result (right) before MiDaS depth inference.}
+
+\label{fig:preprocess_examples}
+
 \end{figure}
+
+The intermediate visualizations illustrate the effect of each preprocessing method before depth inference. Gamma correction restores low-light structures and improves visibility in dark scenes, denoising suppresses high-frequency sensor artifacts caused by noise corruptions, and CLAHE enhances local contrast and edge visibility under snow corruption. These preprocessing operations aim to partially restore visual cues that are degraded by corruption before the image is passed into MiDaS.
 
 % ============================================================
 \section{Results}
@@ -426,14 +472,15 @@ For the break-it stage, we evaluate MiDaS on NYU Depth V2, DIODE, and KITTI-C. N
 
 For the improve-it stage, we focus on KITTI-C because it provides explicit corruption labels and severity levels. The KITTI-C manifest contains 63,427 image rows, among which 59,332 images have valid KITTI ground-truth depth and are used for evaluation.
 
-We compare three settings:
+We compare four settings:
 \begin{itemize}[leftmargin=*]
     \item \textbf{Baseline}: corrupted KITTI-C image directly passed into MiDaS.
-    \item \textbf{Naive Auto}: corruption-aware preprocessing using gamma correction, CLAHE, and denoising.
+    \item \textbf{Naive Auto}: corruption-aware preprocessing using gamma correction, CLAHE, and OpenCV NLMeans denoising.
     \item \textbf{Auto-Conservative}: a refined preprocessing policy that only applies transformations to corruption types where preprocessing empirically improved performance.
+    \item \textbf{Auto-Restormer}: replaces CLAHE and NLMeans with the pretrained Restormer restoration network --- deraining checkpoint for snow/frost/fog and real\_denoising checkpoint for the four noise corruptions; gamma correction is retained for dark.
 \end{itemize}
 
-\subsection{Break-It Results Across Datasets}
+\subsection{Break-It Results Across Datasets: Domain-Level Failure}
 
 \begin{table}[H]
 \centering
@@ -443,17 +490,47 @@ Dataset / Split & AbsRel & RMSE & $\delta_1$ \\
 \midrule
 NYU Depth V2 & 0.1450 & 0.4880 & 0.8192 \\
 DIODE overall & 0.3836 & 4.3382 & 0.6607 \\
-DIODE indoor & 0.1499 & -- & 0.8181 \\
-DIODE outdoor & 0.5540 & -- & 0.5460 \\
+DIODE indoor & 0.1499 & 0.6380 & 0.8181 \\
+DIODE outdoor & 0.5540 & 7.0345 & 0.5460 \\
 \bottomrule
 \end{tabular}
 \caption{Break-it evaluation across clean indoor and domain-shift datasets. MiDaS performs strongly on clean indoor data but degrades substantially on outdoor DIODE scenes.}
 \label{tab:cross-dataset-breakit}
 \end{table}
 
-The cross-dataset results show a clear domain gap. MiDaS performs well on NYU Depth V2 and DIODE indoor scenes, where indoor layouts and depth ranges are relatively structured. However, DIODE outdoor scenes are substantially harder, with AbsRel increasing to 0.5540 and $\delta_1$ dropping to 0.5460. This supports the first break-it conclusion: even a robust pretrained model remains sensitive to domain shift.
+Figures~\ref{fig:nyu_result} and~\ref{fig:diode_indoor_result} show representative top failure cases on NYU Depth V2 and DIODE indoor scenes. Although the average indoor performance is strong, the failure cases reveal that MiDaS can still struggle with visually cluttered indoor environments. In the NYU examples, many failure cases contain dense objects such as clothes, shelves, furniture, and other small items. These cluttered regions create complex local geometry and ambiguous depth boundaries, making it difficult for the model to infer stable depth from monocular cues. In the DIODE indoor examples, many failures occur in rooms with multi-layer depth structure, such as connected spaces, long corridors, or scenes with several foreground and background layers. These layouts require the model to estimate depth across multiple spatial planes, which can increase prediction error even in indoor environments.
 
-\subsection{KITTI-C Break-It Analysis}
+However, DIODE outdoor scenes are substantially more difficult. AbsRel increases to 0.5540, RMSE rises to 7.0345, and $\delta_1$ drops to 0.5460. Figure~\ref{fig:diode_outdoor_result} further shows that outdoor failure cases are more severe and visually less stable. Based on the qualitative examples, many DIODE outdoor failures contain occlusions from tree branches, poles, or other thin vertical structures. These objects create sparse, irregular, and partially occluded scene geometry, which weakens important monocular cues such as object boundaries, texture continuity, and distant-region structure. Compared with indoor environments, outdoor scenes also contain larger depth ranges, vegetation, irregular object boundaries, and highly variable lighting conditions. These factors produce unstable predictions, especially in distant regions and thin structures.
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[
+        width=0.90\linewidth,
+        trim=0 2400 0 100,
+        clip
+    ]{figures/results_nyu.png}
+    \caption{Representative top 6 failure cases of baseline MiDaS on NYU Depth V2.}
+    \label{fig:nyu_result}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.92\linewidth]{figures/results_diode_indoors.png}
+    \caption{Representative top 6 failure cases of baseline MiDaS on DIODE indoor dataset. }
+    \label{fig:diode_indoor_result}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.92\linewidth]{figures/results_diode_outdoor.png}
+    \caption{Representative top 6 failure cases of baseline MiDaS on DIODE outdoor dataset. }
+    \label{fig:diode_outdoor_result}
+\end{figure}
+
+
+\subsection{KITTI-C Break-It Analysis: Corruption-Level Failure}
+Motivated by the outdoor degradation observed on DIODE, we next evaluate MiDaS on KITTI-C to perform a corruption-level break-it analysis. Unlike NYU Depth V2 and DIODE, KITTI-C provides explicit corruption types and severity levels, which allows us to isolate how different visual corruptions affect MiDaS in outdoor driving scenes.
 
 On KITTI-C, the baseline MiDaS model shows consistent degradation under visual corruptions. The clean setting has AbsRel approximately 0.301 and $\delta_1$ approximately 0.511. Under stronger corruptions, performance becomes worse; at severity 5, AbsRel rises to approximately 0.351 and $\delta_1$ drops to approximately 0.451.
 
@@ -471,75 +548,120 @@ Severity 5 average & 0.351 & 0.451 \\
 \label{tab:kittic-severity-breakit}
 \end{table}
 
-Among corruption types, snow produces the largest degradation relative to the clean setting. The baseline clean AbsRel is 0.3006, while snow reaches 0.4233. This corresponds to an approximate 40.8\% relative increase in AbsRel:
+
+
+Among corruption types, snow produces the largest degradation relative to the clean setting in terms of average AbsRel. The baseline clean AbsRel is 0.3006, while snow reaches 0.4233. This corresponds to an approximate 40.8\% relative increase in AbsRel:
 \[
 \frac{0.4233 - 0.3006}{0.3006} \times 100\% \approx 40.8\%.
 \]
-Structural corruptions such as blur and frost also have strong negative effects, while some illumination or quantization changes are less damaging. These observations motivated the improve-it stage: if certain corruptions damage specific visual cues, targeted preprocessing may partially restore those cues before MiDaS inference.
+
+Figure~\ref{fig:kittic_worst_absrel} further examines worst-case behavior by showing the maximum single-image AbsRel within each corruption type. Although snow is the most damaging corruption on average, the worst-case analysis shows that blur-related corruptions, including defocus blur, glass blur, and motion blur, can produce the largest individual errors. This suggests that MiDaS robustness is affected not only by the average severity of a corruption type, but also by whether a specific image loses key monocular cues such as sharp object boundaries, road structure, and local texture.
+
+Figure~\ref{fig:kittic_top_failure} shows representative top failure cases of the baseline MiDaS model on KITTI-C. Based on these examples, many severe failures occur in defocused or blurred images, as well as in snow and fog-like low-visibility scenes. These corruptions obscure road boundaries, weaken object contours, and reduce reliable texture cues, which makes the monocular depth prediction less stable. Therefore, the KITTI-C break-it analysis shows two complementary failure patterns: snow causes the strongest average degradation, while blur and low-visibility corruptions can create extreme single-image failures.
+
+These observations motivate the improve-it stage. If certain corruptions damage specific visual cues, targeted preprocessing may partially restore those cues before MiDaS inference. However, the failure analysis also suggests that preprocessing must be corruption-dependent, because different corruptions degrade different image cues.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{figures/kittic_worst_absrel_per_corruption.png}
+    \caption{Worst single-image AbsRel for each KITTI-C corruption type using the baseline MiDaS model. }
+    \label{fig:kittic_worst_absrel}
+\end{figure}
+
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[
+        width=0.92\linewidth,
+        trim=0 1000 0 100,
+        clip
+    ]{figures/results_kittic.png}
+    \caption{Representative top 8 failure cases of baseline MiDaS on KITTI-C.}
+    \label{fig:kittic_top_failure}
+\end{figure}
+
+
 
 \subsection{Overall Quantitative Results}
 
 \begin{table}[H]
 \centering
-\begin{tabular}{lccc}
+\small
+\begin{tabular}{lcccc}
 \toprule
-Metric & Baseline & Naive Auto & Auto-Conservative \\
+Metric & Baseline & Naive Auto & Auto-Conservative & Auto-Restormer \\
 \midrule
-AbsRel & 0.330317 & 0.330889 & \textbf{0.329626} \\
-SqRel & 2.414640 & 2.417065 & \textbf{2.405068} \\
-RMSE & 7.039359 & 7.046996 & \textbf{7.029620} \\
-RMSE$_{\log}$ & \textbf{1.179418} & 1.186824 & 1.183067 \\
-$\delta_1$ & 0.472845 & 0.471136 & \textbf{0.473361} \\
-$\delta_2$ & 0.763958 & 0.763413 & \textbf{0.764779} \\
-$\delta_3$ & 0.881774 & 0.881666 & \textbf{0.882166} \\
+AbsRel        & 0.330317 & 0.330889 & 0.329626 & \textbf{0.328243} \\
+SqRel         & 2.414640 & 2.417065 & 2.405068 & \textbf{2.373022} \\
+RMSE          & 7.039359 & 7.046996 & 7.029620 & \textbf{6.995024} \\
+RMSE$_{\log}$ & \textbf{1.179418} & 1.186824 & 1.183067 & 1.222940 \\
+$\delta_1$    & 0.472845 & 0.471136 & 0.473361 & \textbf{0.474216} \\
+$\delta_2$    & 0.763958 & 0.763413 & 0.764779 & \textbf{0.767534} \\
+$\delta_3$    & 0.881774 & 0.881666 & 0.882166 & \textbf{0.882383} \\
 \bottomrule
 \end{tabular}
-\caption{Overall KITTI-C results averaged over 59,332 evaluated images. Auto-conservative achieves the best performance on most metrics.}
+\caption{Overall KITTI-C results averaged over 59,332 evaluated images. Auto-Restormer achieves the best score on six of seven metrics; only RMSE$_{\log}$ favours the baseline, which we attribute to Restormer's smoothing of close-range texture that disproportionately affects log-space error.}
 \label{tab:overall-results}
 \end{table}
 
-The naive auto strategy slightly worsens the overall average compared with baseline. In contrast, the auto-conservative strategy improves AbsRel, SqRel, RMSE, $\delta_1$, $\delta_2$, and $\delta_3$.
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figures/fig_strategy_comparison.png}
+\caption{Overall KITTI-C metrics across the four preprocessing strategies. Auto-Restormer is the best strategy on AbsRel, RMSE, and $\delta_1$.}
+\label{fig:strategy-comparison}
+\end{figure}
+
+The naive auto strategy slightly worsens the overall average compared with baseline. The auto-conservative strategy recovers most of the loss and improves on baseline on six of seven metrics, and the auto-restormer strategy improves the same six metrics further, achieving the lowest overall AbsRel, SqRel, and RMSE and the highest $\delta_1$, $\delta_2$, and $\delta_3$.
 
 \subsection{Per-Corruption Results}
 
-\begin{table*}[t]
+\begin{table}[H]
 \centering
 \scriptsize
 \resizebox{\textwidth}{!}{
-\begin{tabular}{lccc|ccc|ccc}
+\begin{tabular}{lccc|ccc|ccc|ccc}
 \toprule
 & \multicolumn{3}{c|}{Baseline}
 & \multicolumn{3}{c|}{Naive Auto}
-& \multicolumn{3}{c}{Auto-Conservative} \\
+& \multicolumn{3}{c|}{Auto-Conservative}
+& \multicolumn{3}{c}{Auto-Restormer} \\
 Corruption & AbsRel & RMSE & $\delta_1$
+& AbsRel & RMSE & $\delta_1$
 & AbsRel & RMSE & $\delta_1$
 & AbsRel & RMSE & $\delta_1$ \\
 \midrule
-brightness & 0.3019 & 6.5205 & 0.5072 & 0.3012 & 6.5228 & 0.5072 & 0.3019 & 6.5205 & 0.5072 \\
-clean & 0.3006 & 6.5095 & 0.5111 & 0.3006 & 6.5095 & 0.5111 & 0.3006 & 6.5095 & 0.5111 \\
-color\_quant & 0.3186 & 6.8009 & 0.4865 & 0.3186 & 6.8009 & 0.4865 & 0.3186 & 6.8009 & 0.4865 \\
-contrast & 0.3075 & 6.5946 & 0.5025 & 0.3183 & 6.7583 & 0.4855 & 0.3075 & 6.5946 & 0.5025 \\
-dark & 0.3289 & 6.9733 & 0.4752 & 0.3277 & 6.9817 & 0.4773 & 0.3277 & 6.9817 & 0.4773 \\
-defocus\_blur & 0.3511 & 7.3216 & 0.4388 & 0.3511 & 7.3216 & 0.4388 & 0.3511 & 7.3216 & 0.4388 \\
-elastic\_transform & 0.3045 & 6.5439 & 0.5024 & 0.3045 & 6.5439 & 0.5024 & 0.3045 & 6.5439 & 0.5024 \\
-fog & 0.3116 & 6.6938 & 0.4999 & 0.3166 & 6.7439 & 0.4879 & 0.3116 & 6.6938 & 0.4999 \\
-frost & 0.3458 & 7.3619 & 0.4501 & 0.3535 & 7.4621 & 0.4387 & 0.3458 & 7.3619 & 0.4501 \\
-gaussian\_noise & 0.3302 & 7.1205 & 0.4759 & 0.3283 & 7.0924 & 0.4770 & 0.3283 & 7.0924 & 0.4770 \\
-glass\_blur & 0.3414 & 7.2104 & 0.4514 & 0.3414 & 7.2104 & 0.4514 & 0.3414 & 7.2104 & 0.4514 \\
-impulse\_noise & 0.3325 & 7.1818 & 0.4737 & 0.3323 & 7.1750 & 0.4726 & 0.3323 & 7.1750 & 0.4726 \\
-iso\_noise & 0.3264 & 7.0795 & 0.4814 & 0.3235 & 7.0323 & 0.4852 & 0.3235 & 7.0323 & 0.4852 \\
-jpeg\_compression & 0.3373 & 7.3158 & 0.4443 & 0.3373 & 7.3158 & 0.4443 & 0.3373 & 7.3158 & 0.4443 \\
-motion\_blur & 0.3244 & 6.9631 & 0.4821 & 0.3244 & 6.9631 & 0.4821 & 0.3244 & 6.9631 & 0.4821 \\
-pixelate & 0.3098 & 6.6528 & 0.4925 & 0.3098 & 6.6528 & 0.4925 & 0.3098 & 6.6528 & 0.4925 \\
-shot\_noise & 0.3228 & 7.0272 & 0.4873 & 0.3218 & 7.0062 & 0.4870 & 0.3218 & 7.0062 & 0.4870 \\
-snow & 0.4233 & 8.4341 & 0.3669 & 0.4180 & 8.3515 & 0.3707 & 0.4180 & 8.3515 & 0.3707 \\
-zoom\_blur & 0.3337 & 7.0188 & 0.4852 & 0.3337 & 7.0188 & 0.4852 & 0.3337 & 7.0188 & 0.4852 \\
+brightness & 0.3019 & 6.5205 & 0.5072 & 0.3012 & 6.5228 & 0.5072 & 0.3019 & 6.5205 & 0.5072 & 0.3019 & 6.5205 & 0.5072 \\
+clean & 0.3006 & 6.5095 & 0.5111 & 0.3006 & 6.5095 & 0.5111 & 0.3006 & 6.5095 & 0.5111 & 0.3006 & 6.5095 & 0.5111 \\
+color\_quant & 0.3186 & 6.8009 & 0.4865 & 0.3186 & 6.8009 & 0.4865 & 0.3186 & 6.8009 & 0.4865 & 0.3186 & 6.8009 & 0.4865 \\
+contrast & 0.3075 & 6.5946 & 0.5025 & 0.3183 & 6.7583 & 0.4855 & 0.3075 & 6.5946 & 0.5025 & 0.3075 & 6.5946 & 0.5025 \\
+dark & 0.3289 & 6.9733 & 0.4752 & 0.3277 & 6.9817 & 0.4773 & 0.3277 & 6.9817 & 0.4773 & 0.3277 & 6.9817 & 0.4773 \\
+defocus\_blur & 0.3511 & 7.3216 & 0.4388 & 0.3511 & 7.3216 & 0.4388 & 0.3511 & 7.3216 & 0.4388 & 0.3511 & 7.3216 & 0.4388 \\
+elastic\_transform & 0.3045 & 6.5439 & 0.5024 & 0.3045 & 6.5439 & 0.5024 & 0.3045 & 6.5439 & 0.5024 & 0.3045 & 6.5439 & 0.5024 \\
+fog & 0.3116 & 6.6938 & 0.4999 & 0.3166 & 6.7439 & 0.4879 & 0.3116 & 6.6938 & 0.4999 & 0.3139 & 6.7316 & 0.4968 \\
+frost & 0.3458 & 7.3619 & 0.4501 & 0.3535 & 7.4621 & 0.4387 & 0.3458 & 7.3619 & 0.4501 & 0.3479 & 7.3657 & 0.4472 \\
+gaussian\_noise & 0.3302 & 7.1205 & 0.4759 & 0.3283 & 7.0924 & 0.4770 & 0.3283 & 7.0924 & 0.4770 & 0.3379 & 7.1598 & 0.4663 \\
+glass\_blur & 0.3414 & 7.2104 & 0.4514 & 0.3414 & 7.2104 & 0.4514 & 0.3414 & 7.2104 & 0.4514 & 0.3414 & 7.2104 & 0.4514 \\
+impulse\_noise & 0.3325 & 7.1818 & 0.4737 & 0.3323 & 7.1750 & 0.4726 & 0.3323 & 7.1750 & 0.4726 & 0.3623 & 7.5900 & 0.4333 \\
+iso\_noise & 0.3264 & 7.0795 & 0.4814 & 0.3235 & 7.0323 & 0.4852 & 0.3235 & 7.0323 & 0.4852 & 0.3299 & 7.0630 & 0.4757 \\
+jpeg\_compression & 0.3373 & 7.3158 & 0.4443 & 0.3373 & 7.3158 & 0.4443 & 0.3373 & 7.3158 & 0.4443 & 0.3373 & 7.3158 & 0.4443 \\
+motion\_blur & 0.3244 & 6.9631 & 0.4821 & 0.3244 & 6.9631 & 0.4821 & 0.3244 & 6.9631 & 0.4821 & 0.3244 & 6.9631 & 0.4821 \\
+pixelate & 0.3098 & 6.6528 & 0.4925 & 0.3098 & 6.6528 & 0.4925 & 0.3098 & 6.6528 & 0.4925 & 0.3098 & 6.6528 & 0.4925 \\
+shot\_noise & 0.3228 & 7.0272 & 0.4873 & 0.3218 & 7.0062 & 0.4870 & 0.3218 & 7.0062 & 0.4870 & 0.3358 & 7.1714 & 0.4714 \\
+snow & 0.4233 & 8.4341 & 0.3669 & 0.4180 & 8.3515 & 0.3707 & 0.4180 & 8.3515 & 0.3707 & \textbf{0.3284} & \textbf{7.0018} & \textbf{0.4675} \\
+zoom\_blur & 0.3337 & 7.0188 & 0.4852 & 0.3337 & 7.0188 & 0.4852 & 0.3337 & 7.0188 & 0.4852 & 0.3337 & 7.0188 & 0.4852 \\
 \bottomrule
 \end{tabular}
 }
-\caption{Per-corruption KITTI-C results. Auto-conservative preserves baseline performance on corruptions where naive preprocessing was harmful, while retaining gains on dark, snow, and noise corruptions.}
+\caption{Per-corruption KITTI-C results across the four preprocessing strategies. Auto-Restormer dramatically improves \texttt{snow} (bolded) but regresses on noise corruptions, especially \texttt{impulse\_noise}. Bold values mark the corruption with the largest single-cell improvement attributable to the auto-restormer strategy.}
 \label{tab:per-corruption-results}
-\end{table*}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.82\linewidth]{figures/fig_per_corruption_improvement.png}
+\caption{Relative AbsRel change from Auto-Restormer, by corruption type. Positive values (green) indicate AbsRel reduction over baseline. Snow improves by 22.4\%, while three of the four additive-noise corruptions worsen, with impulse noise the worst at $-9.0\%$. This decomposition makes clear that the overall gain is driven almost entirely by the snow $\rightarrow$ deraining mapping.}
+\label{fig:per-corruption-improvement}
+\end{figure}
 
 \subsection{Naive Auto Policy Analysis}
 
@@ -577,30 +699,83 @@ As a result:
 \]
 Although the gains are modest, they are meaningful because the method does not retrain or modify MiDaS.
 
+\subsection{Auto-Restormer Analysis}
+
+The auto-restormer policy replaces the classical CLAHE and NLMeans operators with the pretrained Restormer network. The result is the strongest overall setting in our comparison, but the per-corruption decomposition reveals a strongly asymmetric behavior.
+
+\paragraph{Snow success.} Snow is the largest gain. Compared with the baseline, auto-restormer reduces snow AbsRel from $0.4233$ to $0.3284$, an improvement of about $22.4\%$. RMSE drops from $8.4341$ to $7.0018$, and $\delta_1$ rises from $0.3669$ to $0.4675$ (a $27.4\%$ relative increase). We attribute this to the structural similarity between the rain streaks Restormer's deraining checkpoint was trained on and the snowflake-like occlusion patterns in KITTI-C snow images.
+
+\paragraph{Noise failure.} The four additive-noise corruptions move in the opposite direction. Auto-restormer worsens impulse\_noise AbsRel by $9.0\%$ ($0.3325 \rightarrow 0.3623$), shot\_noise by $4.0\%$ ($0.3228 \rightarrow 0.3358$), gaussian\_noise by $2.3\%$ ($0.3302 \rightarrow 0.3379$), and iso\_noise by $1.1\%$ ($0.3264 \rightarrow 0.3299$). We interpret this as Restormer's real\_denoising model over-smoothing fine texture --- removing the high-frequency signal that MiDaS uses as a depth cue along with the noise itself. The same operator that works well as a denoising front-end for image restoration acts as a depth-cue eraser when chained with a monocular depth model.
+
+\paragraph{Severity behavior.} Figure~\ref{fig:severity-curves} shows AbsRel as a function of corruption severity. Across all corruptions, auto-restormer is consistently better than baseline at severities 1--4 and approximately matched at severity 5. The snow panel shows that the snow gap is large and roughly constant across severities --- the deraining model holds AbsRel near $0.32$ even at severity 5, while baseline degrades steeply. The noise panel shows that the auto-restormer curve rises faster than baseline, so the noise penalty grows with severity. Figure~\ref{fig:snow-severity} shows the same trend on snow alone for AbsRel, RMSE, and $\delta_1$, all of which remain nearly flat across severities under auto-restormer.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figures/fig_severity_curves.png}
+\caption{AbsRel as a function of corruption severity. Left: averaged over all corruptions. Centre: snow only --- auto-restormer is nearly flat across severities. Right: averaged over the four additive-noise corruptions --- the auto-restormer curve rises faster than baseline, so the gap widens with severity.}
+\label{fig:severity-curves}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figures/fig_snow_severity_metrics.png}
+\caption{Snow-only severity curves for AbsRel, RMSE, and $\delta_1$. Auto-Restormer holds all three metrics nearly flat across severity, while the baseline degrades steeply --- the deraining model effectively functions as a snow-removal front-end for MiDaS.}
+\label{fig:snow-severity}
+\end{figure}
+
+The combination of these results refines the rule we identified in the auto-conservative analysis. The auto-conservative finding was \emph{when to preprocess}. The auto-restormer finding is sharper: \emph{which restoration task to choose}. Restormer's deraining task transfers strongly to snow because the corruption pattern matches. Restormer's denoising task hurts noise corruptions because it removes structure MiDaS depends on. A stronger restoration network does not automatically yield a stronger preprocessing front-end; the alignment between restoration task and corruption type matters more than the strength of the network.
+
 \subsection{Qualitative Results}
 
 \begin{figure}[H]
+
 \centering
-\includegraphics[width=\linewidth]{figures/figure1_snow_corruption.png}
-\caption{Snow corruption example. Columns show corrupted input, CLAHE result, baseline depth, improved depth, KITTI ground truth, and error reduction map. Green in the error map indicates lower relative error after preprocessing.}
-\label{fig:snow-qualitative}
+
+\includegraphics[width=\linewidth]{figures/snow.png}
+
+\vspace{4mm}
+
+\includegraphics[width=\linewidth]{figures/dark.png}
+
+\vspace{4mm}
+
+\includegraphics[width=\linewidth]{figures/noise.png}
+
+\caption{
+Qualitative comparison between baseline MiDaS and the proposed auto-conservative preprocessing strategy.
+The first row shows snow corruption with CLAHE enhancement, the second row shows dark corruption with gamma correction, and the third row shows gaussian noise corruption with denoising.
+For each example, preprocessing improves local structure visibility and produces depth predictions that are visually closer to ground truth.
+}
+
+\label{fig:qualitative_all}
+
+\end{figure}
+
+Qualitative examples show that snow corruption weakens road boundaries and object edges, while noise corruptions introduce distributed local artifacts across textured regions. Compared with the baseline MiDaS predictions, the proposed preprocessing methods produce cleaner and more spatially consistent depth maps. In particular, CLAHE improves edge visibility under snow corruption, gamma correction restores low-light structural information in dark scenes, and denoising suppresses high-frequency artifacts caused by sensor noise. The auto-conservative strategy reduces these corruption-specific failures while avoiding preprocessing on corruption types where enhancement was observed to be harmful.
+
+\paragraph{Auto-Restormer Qualitative Comparison.}
+Figure~\ref{fig:qualitative-restormer-combined} summarises the auto-restormer story with three representative KITTI-C images, one per category (snow success, dark success, noise failure). Each row shows the corrupted RGB, the Restormer-enhanced RGB, the baseline MiDaS depth, the auto-restormer MiDaS depth, the KITTI ground truth, and a per-pixel error reduction map (green = auto-restormer better, red = worse).
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figures/fig_qualitative_combined.png}
+\caption{Qualitative comparison of Auto-Restormer vs Baseline on three KITTI-C images. Row 1 (snow, severity 3): Restormer-deraining removes streaks and AbsRel drops from $0.927$ to $0.317$. Row 2 (dark, severity 5): gamma correction restores scene structure and AbsRel drops from $0.625$ to $0.366$. Row 3 (impulse noise, severity 5): Restormer-denoising over-smooths the image, MiDaS produces a near-uniform depth field, and AbsRel rises from $0.396$ to $0.794$. This panel captures the core finding: the restoration task identity determines whether the depth model improves or collapses.}
+\label{fig:qualitative-restormer-combined}
 \end{figure}
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=\linewidth]{figures/figure2_dark_corruption.png}
-\caption{Dark corruption example. Columns show corrupted input, gamma-corrected input, baseline depth, improved depth, KITTI ground truth, and error reduction map. Gamma correction brightens low-light regions before MiDaS inference.}
-\label{fig:dark-qualitative}
+\includegraphics[width=\linewidth]{figures/fig_qualitative_snow.png}
+\caption{Snow success cases at severities 3 and 4. The Restormer-deraining model transfers strongly: the road, lane markings, and far-field structure become visible after restoration, and MiDaS recovers depth that was lost under the corrupted input.}
+\label{fig:qualitative-restormer-snow}
 \end{figure}
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=\linewidth]{figures/figure3_noise_corruption.png}
-\caption{Noise corruption example. Columns show corrupted input, denoised input, baseline depth, improved depth, KITTI ground truth, and error reduction map. Denoising suppresses high-frequency sensor noise before MiDaS inference.}
-\label{fig:noise-qualitative}
+\includegraphics[width=\linewidth]{figures/fig_qualitative_noise_failure.png}
+\caption{Impulse-noise failure cases at severity 5. Restormer's real\_denoising model removes the noise, but also flattens the fine texture MiDaS relies on for depth cues. The resulting predictions collapse toward a near-uniform field and the error map is dominated by red, motivating a hybrid policy that retains classical NLMeans for additive-noise corruptions.}
+\label{fig:qualitative-restormer-noise}
 \end{figure}
-
-Qualitative examples show that snow weakens road boundaries and object edges, dark corruption suppresses useful low-light structure, and noise corruptions produce distributed local errors across textured regions. The conservative preprocessing strategy reduces some of these local failures without modifying corruption types where preprocessing is harmful.
 
 % ============================================================
 \section{Discussion and Conclusions}
@@ -618,9 +793,11 @@ However, preprocessing is not universally beneficial. Applying CLAHE to fog, fro
 
 The auto-conservative strategy addresses this issue by only applying transformations to corruption types where we observed empirical gains. This connects the two project stages: the break-it analysis identifies which corruptions are harmful and why, while the improve-it stage tests targeted interventions for those failure modes.
 
+Replacing the classical operators with a stronger pretrained restoration network does not uniformly help; it amplifies the corruption-dependence we already observed. Restormer's deraining task is highly effective on snow (AbsRel $0.4233 \rightarrow 0.3284$, a $22.4\%$ relative reduction) because snow and rain share streak-like occlusion statistics. But the same network's real\_denoising task degrades all four additive-noise corruptions: impulse\_noise worsens by $9.0\%$, shot\_noise by $4.0\%$, gaussian\_noise by $2.3\%$, and iso\_noise by $1.1\%$. We interpret this as the denoiser removing fine-grained texture that MiDaS uses as a depth cue: removing noise also removes the high-frequency signal that disambiguates near-field surfaces. The qualitative impulse-noise example in Figure~\ref{fig:qualitative-restormer-noise} makes this concrete --- after Restormer denoising, the MiDaS depth prediction collapses toward a near-uniform field. This refines the auto-conservative claim: choosing the correct restoration \emph{task} matters more than choosing whether to apply restoration at all.
+
 \subsection{Main Insights}
 
-Our experiments support four main insights. First, MiDaS performs well on clean indoor data but is sensitive to outdoor domain shift. Second, MiDaS is sensitive to visual corruptions in outdoor driving scenes, especially snow and severe structural corruptions. Third, preprocessing is corruption-dependent: a method that helps one corruption type may hurt another. Fourth, conservative preprocessing is more effective than broad preprocessing.
+Our experiments support five main insights. First, MiDaS performs well on clean indoor data but is sensitive to outdoor domain shift. Second, MiDaS is sensitive to visual corruptions in outdoor driving scenes, especially snow and severe structural corruptions. Third, preprocessing is corruption-dependent: a method that helps one corruption type may hurt another. Fourth, conservative preprocessing is more effective than broad preprocessing. Fifth, when a stronger pretrained restoration network is used as preprocessing, the choice of \emph{restoration task} (deraining vs.\ denoising) matters more than the decision to apply restoration: deraining transfers strongly to snow, while denoising removes texture cues that MiDaS depends on.
 
 \subsection{Limitations}
 
@@ -628,65 +805,51 @@ Our project has several limitations. First, MiDaS predicts relative depth rather
 
 \subsection{Future Work}
 
-Future work could explore learned corruption detection, corruption-aware fine-tuning, test-time adaptation, video-based temporal stabilization, and stronger restoration methods. A natural next step is to replace oracle corruption labels with an automatic corruption classifier so that the conservative preprocessing policy can be used in real deployments. Another direction is to extend the improve-it stage to DIODE and NYU Depth V2 to test whether preprocessing improves domain-shift robustness beyond KITTI-C.
+Future work could explore learned corruption detection, corruption-aware fine-tuning, test-time adaptation, video-based temporal stabilization, and stronger restoration methods. A natural next step is to replace oracle corruption labels with an automatic corruption classifier so that the conservative and restormer-based preprocessing policies can be used in real deployments. A second direction is suggested directly by our auto-restormer findings: build a hybrid policy that uses Restormer-deraining for weather corruptions (where it dominates) but retains the lighter classical NLMeans operator for additive-noise corruptions (where Restormer-denoising hurt depth estimation). Such a hybrid policy would combine the best operator per corruption category rather than relying on a single restoration network. A third direction is to extend the improve-it stage to DIODE and NYU Depth V2 to test whether preprocessing improves domain-shift robustness beyond KITTI-C.
 
 \subsection{Conclusion}
 
-In this project, we evaluated the robustness of MiDaS monocular depth estimation under domain shift and visual corruptions. The break-it stage showed that MiDaS performs well on clean indoor data but degrades on outdoor domain shift and corrupted KITTI-C images. The improve-it stage showed that the naive auto preprocessing policy did not improve KITTI-C performance because CLAHE degraded fog, frost, and contrast corruptions. After analyzing this failure mode, we introduced an auto-conservative policy that applies gamma correction only to dark images, CLAHE only to snow, and denoising only to noise corruptions. The main conclusion is that robustness improvement is not only about applying stronger preprocessing, but also about deciding when not to modify the input.
+In this project, we evaluated the robustness of MiDaS monocular depth estimation under domain shift and visual corruptions. The break-it stage showed that MiDaS performs well on clean indoor data but degrades on outdoor domain shift and corrupted KITTI-C images. The improve-it stage compared four preprocessing strategies. The naive auto policy did not improve KITTI-C performance because CLAHE degraded fog, frost, and contrast corruptions. The auto-conservative policy recovered most of that loss by only applying transformations to corruption types where they empirically helped. The auto-restormer policy, which replaces CLAHE and NLMeans with the pretrained Restormer restoration network, achieved the best overall AbsRel, SqRel, RMSE, $\delta_1$, $\delta_2$, and $\delta_3$, driven by a $22.4\%$ AbsRel reduction on snow; however, Restormer's denoising task hurt every additive-noise corruption. The main conclusion is that robustness improvement is not only about applying stronger preprocessing, but about deciding both \emph{when} to modify the input and \emph{which restoration task} to apply for each corruption type.
 
 % ============================================================
 \section{Statement of Individual Contribution}
 % ============================================================
 
 \begin{itemize}[leftmargin=*]
-    \item \textbf{Xinyin Liang}: Implemented the MiDaS inference pipeline and GPU support.
-    \item \textbf{Yihui Chen}: Worked on NYU Depth V2 processing, metric evaluation, and indoor baseline failure analysis.
-    \item \textbf{Kaiyu Liu}: Worked on KITTI-C corruption evaluation, preprocessing experiments, and result comparison.
-    \item \textbf{Yuyang Zeng}: Worked on DIODE processing, indoor/outdoor domain-shift analysis, visualization, and report organization.
+    \item \textbf{Xinyin Liang}: Implemented the MiDaS inference pipeline, GPU support, and streaming evaluation framework.
+    
+    \item \textbf{Yihui Chen}: Worked on NYU Depth V2 processing, metric evaluation, indoor baseline analysis, and cross-dataset quantitative evaluation.
+    
+    \item \textbf{Kaiyu Liu}: Worked on KITTI-C corruption evaluation, preprocessing experiments (including Restormer integration as a frozen preprocessing front-end), corruption-specific result analysis, severity-stratified analysis, and qualitative visualization generation for the Auto-Restormer panels.
+    
+    \item \textbf{Yuyang Zeng}: Worked on DIODE processing, indoor/outdoor domain-shift analysis, dataset integration, and report organization.
 \end{itemize}
 
-All group members contributed to project discussion, experimental design, and report writing.
+The corruption-aware preprocessing design and auto-conservative policy were developed collaboratively by all group members through joint failure analysis and experimental comparison on KITTI-C. All group members also contributed to project discussion, experimental design, visualization analysis, and report writing.
 
+\subsection*{Source Code Submission}
+In addition to the report, we submit a zip file containing the most important source code written by our group. The submitted code includes dataset manifest construction, MiDaS inference, preprocessing policies, scale-shift alignment, metric computation, streaming KITTI-C evaluation, and result aggregation scripts. We exclude external libraries, pretrained model weights, datasets, virtual environments, and generated prediction files.
 % ============================================================
 \section{References}
 % ============================================================
 
 \begin{enumerate}[leftmargin=*]
 
-\item R. Ranftl, K. Lasinger, K. Hafner, K. Schindler, and V. Koltun.
-``Towards Robust Monocular Depth Estimation: Mixing Datasets for Zero-shot Cross-dataset Transfer.''
-IEEE Transactions on Pattern Analysis and Machine Intelligence, 2022.
+\item Ranftl, R., Lasinger, K., Hafner, D., Schindler, K., \& Koltun, V. (2020). Towards robust monocular depth estimation: Mixing datasets for zero-shot cross-dataset transfer (arXiv:1907.01341). arXiv. \url{https://doi.org/10.48550/arXiv.1907.01341}
 
-\item L. Kong et al.
-``RoboDepth: Robust Out-of-Distribution Depth Estimation under Corruptions.''
-arXiv:2310.15171, 2023.
+\item Kong, L., Xie, S., Hu, H., Ng, L. X., Cottereau, B. R., \& Ooi, W. T. (2023). Robodepth: Robust out-of-distribution depth estimation under corruptions (arXiv:2310.15171). arXiv. \url{https://doi.org/10.48550/arXiv.2310.15171}
 
-\item N. Silberman, D. Hoiem, P. Kohli, and R. Fergus.
-``Indoor Segmentation and Support Inference from RGBD Images.''
-European Conference on Computer Vision, 2012.
+\item Zamir, S. W., Arora, A., Khan, S., Hayat, M., Khan, F. S., \& Yang, M.-H. (2022). Restormer: Efficient transformer for high-resolution image restoration. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), 5728--5739. \url{https://doi.org/10.1109/CVPR52688.2022.00564}
 
-\item I. Vasiljevic et al.
-``DIODE: A Dense Indoor and Outdoor Depth Dataset.''
-arXiv:1908.00463, 2019.
+\item Silberman, N., Hoiem, D., Kohli, P., \& Fergus, R. (2012). Indoor segmentation and support inference from RGBD images. Proceedings of the 12th European Conference on Computer Vision - Volume Part V, ECCV’12, 746--760. \url{https://doi.org/10.1007/978-3-642-33715-4_54}
 
-\item Intel ISL.
-``MiDaS.'' GitHub repository.
-\url{https://github.com/isl-org/MiDaS}
+\item Vasiljevic, I., Kolkin, N., Zhang, S., Luo, R., Wang, H., Dai, F. Z., Daniele, A. F., Mostajabi, M., Basart, S., Walter, M. R., \& Shakhnarovich, G. (2019). Diode: A dense indoor and outdoor depth dataset (arXiv:1908.00463). arXiv. \url{https://doi.org/10.48550/arXiv.1908.00463}
 
-\item KITTI Vision Benchmark Suite.
-\url{https://www.cvlibs.net/datasets/kitti/}
+\item NYU Depth V2 Dataset. \url{https://cs.nyu.edu/~fergus/datasets/nyu_depth_v2.html}
 
-\item NYU Depth V2 Dataset.
-\url{https://cs.nyu.edu/~fergus/datasets/nyu_depth_v2.html}
+\item DIODE Dataset. \url{https://diode-dataset.org}
 
-\item DIODE Dataset.
-\url{https://diode-dataset.org}
-
-\item RoboDepth Benchmark.
-\url{https://github.com/ldkong1205/RoboDepth}
-
-\item OpenCV Documentation.
-\url{https://docs.opencv.org/}
+\item KITTI-C / RoboDepth. \url{https://github.com/worldbench/RoboDepth#kitti-c}
 
 \end{enumerate}
 

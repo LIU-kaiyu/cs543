@@ -34,6 +34,17 @@ DENOISE_CORRUPTIONS = {
     "iso_noise",
     "shot_noise",
 }
+RESTORMER_WEATHER_CORRUPTIONS = {
+    "fog",
+    "frost",
+    "snow",
+}
+RESTORMER_NOISE_CORRUPTIONS = {
+    "gaussian_noise",
+    "impulse_noise",
+    "iso_noise",
+    "shot_noise",
+}
 
 
 def _to_uint8(image: np.ndarray) -> np.ndarray:
@@ -106,7 +117,7 @@ def build_preprocessor(
 
     Supported names:
       none, auto, auto-conservative, clahe, gamma, denoise,
-      clahe-gamma, clahe-denoise
+      clahe-gamma, clahe-denoise, restormer, auto-restormer
     """
     normalized = name.lower().replace("_", "-")
     corruption = (corruption_type or "").lower()
@@ -153,6 +164,21 @@ def build_preprocessor(
             ]
         )
 
+    if normalized == "restormer":
+        from src.adapters.restormer_adapter import apply_restormer
+        return apply_restormer
+
+    if normalized == "auto-restormer":
+        if corruption in GAMMA_CORRUPTIONS:
+            return lambda image: apply_gamma(image, gamma=gamma)
+        if corruption in RESTORMER_WEATHER_CORRUPTIONS:
+            from src.adapters.restormer_adapter import apply_restormer
+            return apply_restormer
+        if corruption in RESTORMER_NOISE_CORRUPTIONS:
+            from src.adapters.restormer_adapter import apply_restormer
+            return lambda image: apply_restormer(image, task="real_denoising")
+        return None
+
     raise ValueError(f"Unknown preprocessing strategy: {name}")
 
 
@@ -165,4 +191,6 @@ def prediction_tag(name: str, gamma: float = 0.7, clahe_clip_limit: float = 2.0)
         parts.append(f"g{gamma:g}")
     if "clahe" in normalized or normalized == "auto":
         parts.append(f"c{clahe_clip_limit:g}")
+    if normalized == "auto-restormer":
+        parts.append(f"g{gamma:g}")
     return "_".join(parts).replace(".", "p")
