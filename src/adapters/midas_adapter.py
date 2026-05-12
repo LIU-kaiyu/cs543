@@ -6,6 +6,7 @@ Outputs are raw relative inverse depth maps saved as .npy files.
 """
 import sys
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
@@ -13,6 +14,8 @@ from typing import Optional
 import cv2
 import numpy as np
 import torch
+
+ImagePreprocessor = Callable[[np.ndarray], np.ndarray]
 
 # ---- FORCE THE MIDAS PATH FOR THIS MACHINE ----
 # _MIDAS_DIR = Path("/home/kaiyul3/cs543/third_party/MIDAS")
@@ -117,7 +120,11 @@ class MiDaSAdapter:
         self.optimize = optimize
         print(f"[MiDaSAdapter] Model '{model_type}' loaded on {self.device}")
 
-    def predict(self, image_path: str) -> np.ndarray:
+    def predict(
+        self,
+        image_path: str | np.ndarray,
+        preprocessor: ImagePreprocessor | None = None,
+    ) -> np.ndarray:
         """
         Run inference on a single image.
 
@@ -130,6 +137,8 @@ class MiDaSAdapter:
             img_rgb = _read_image(image_path)
         else:
             img_rgb = image_path
+        if preprocessor is not None:
+            img_rgb = preprocessor(img_rgb)
         sample = self.transform({"image": img_rgb})["image"]
 
 
@@ -160,6 +169,7 @@ class MiDaSAdapter:
         image_paths: list[str],
         batch_size: int = 16,
         num_workers: int = 8,
+        preprocessors: list[ImagePreprocessor | None] | None = None,
     ) -> list[np.ndarray]:
         """
         Run batched GPU inference over a list of image paths.
@@ -173,8 +183,14 @@ class MiDaSAdapter:
         """
         use_amp = self.device.type == "cuda"
 
-        def _load(path: str):
+        if preprocessors is not None and len(preprocessors) != len(image_paths):
+            raise ValueError("preprocessors must be the same length as image_paths")
+
+        def _load(item):
+            path, preprocessor = item
             img = _read_image(path)
+            if preprocessor is not None:
+                img = preprocessor(img)
             orig_hw = img.shape[:2]
             tensor = torch.from_numpy(self.transform({"image": img})["image"])
             return tensor, orig_hw
@@ -183,12 +199,17 @@ class MiDaSAdapter:
 
         for start in range(0, len(image_paths), batch_size):
             batch_paths = image_paths[start: start + batch_size]
+            if preprocessors is None:
+                batch_preprocessors = [None] * len(batch_paths)
+            else:
+                batch_preprocessors = preprocessors[start: start + batch_size]
+            batch_items = list(zip(batch_paths, batch_preprocessors))
 
             if num_workers and num_workers > 0:
                 with ThreadPoolExecutor(max_workers=num_workers) as pool:
-                    loaded = list(pool.map(_load, batch_paths))
+                    loaded = list(pool.map(_load, batch_items))
             else:
-                loaded = [_load(path) for path in batch_paths]
+                loaded = [_load(item) for item in batch_items]
 
             tensors = torch.stack([t for t, _ in loaded]).to(self.device)
             orig_sizes = [hw for _, hw in loaded]

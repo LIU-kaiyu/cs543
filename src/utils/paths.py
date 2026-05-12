@@ -1,6 +1,10 @@
 from pathlib import Path
 from typing import Optional
-import yaml
+
+try:
+    import yaml
+except ModuleNotFoundError:  # pragma: no cover - only used in lean local envs
+    yaml = None
 
 
 _PROJECT_ROOT: Optional[Path] = None
@@ -24,10 +28,41 @@ def _load_config() -> dict:
     global _CONFIG
     if _CONFIG is None:
         cfg_path = project_root() / "configs" / "dataset_paths.yaml"
-        # with open(cfg_path) as f:
         with open(cfg_path, encoding="utf-8") as f:
-            _CONFIG = yaml.safe_load(f)
+            if yaml is not None:
+                _CONFIG = yaml.safe_load(f)
+            else:
+                _CONFIG = _load_simple_yaml(f.read())
     return _CONFIG
+
+
+def _load_simple_yaml(text: str) -> dict:
+    """
+    Parse the small two-level dataset_paths.yaml file without PyYAML.
+
+    This keeps local utility scripts usable in partially configured
+    environments; full YAML support is still provided by PyYAML when present.
+    """
+    cfg: dict[str, dict[str, str]] = {}
+    current_section: str | None = None
+
+    for raw_line in text.splitlines():
+        line = raw_line.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+
+        if not line.startswith(" ") and line.endswith(":"):
+            current_section = line[:-1].strip()
+            cfg[current_section] = {}
+            continue
+
+        if current_section is None or ":" not in line:
+            continue
+
+        key, value = line.strip().split(":", 1)
+        cfg[current_section][key.strip()] = value.strip()
+
+    return cfg
 
 
 def get_dataset_path(dataset: str, key: str) -> Path:

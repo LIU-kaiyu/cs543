@@ -32,10 +32,22 @@ def align_scale_shift(
     p = pred[valid_mask].astype(np.float64)
     g = gt[valid_mask].astype(np.float64)
 
-    # Solve [ p  1 ] [ scale  shift ]^T = g  in least-squares sense
-    A = np.stack([p, np.ones_like(p)], axis=1)  # (N, 2)
-    result, _, _, _ = np.linalg.lstsq(A, g, rcond=None)
-    scale, shift = result
+    if p.size == 0:
+        return pred.astype(np.float32, copy=True)
+
+    # Closed-form least-squares fit for g ~= scale * p + shift.
+    # This is equivalent to np.linalg.lstsq([p, 1], g), but avoids building
+    # a large dense design matrix for every KITTI-C image.
+    p_mean = p.mean()
+    g_mean = g.mean()
+    p_centered = p - p_mean
+    denom = np.sum(p_centered * p_centered)
+    if denom <= np.finfo(np.float64).eps:
+        scale = 0.0
+        shift = g_mean
+    else:
+        scale = np.sum(p_centered * (g - g_mean)) / denom
+        shift = g_mean - scale * p_mean
 
     pred_aligned = (scale * pred + shift).astype(np.float32)
     return pred_aligned
